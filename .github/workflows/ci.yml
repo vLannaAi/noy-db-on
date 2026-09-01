@@ -50,6 +50,11 @@ jobs:
       # green either way (measured). Only a static check sees it.
       - name: Every package declares what it uses
         run: pnpm check:declared-deps
+      # This repo answers for the codemod rows naming ITS packages. hub shipped
+      # them and can no longer check them — the packages moved here, so the
+      # obligation did too. Nothing compiles a migration map.
+      - name: Codemod rows agree with this repo's source
+        run: pnpm check:codemod-rows
       - name: Lint
         run: pnpm lint
       - name: Typecheck

@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "check:architecture": "node scripts/check-architecture.mjs",
+    "check:codemod-rows": "node scripts/check-codemod-rows.mjs",
     "check:declared-deps": "node scripts/check-declared-deps.mjs",
     "check:peer-floor": "node scripts/check-peer-floor.mjs",
     "lint": "pnpm -r lint",
