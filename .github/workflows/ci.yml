@@ -45,6 +45,11 @@ jobs:
         run: pnpm build
       - name: Architecture invariants
         run: pnpm check:architecture
+      # Catches a dependency a package USES but never DECLARES. The test suite
+      # cannot: a sibling declaring it satisfies pnpm's store, so the suite goes
+      # green either way (measured). Only a static check sees it.
+      - name: Every package declares what it uses
+        run: pnpm check:declared-deps
       - name: Lint
         run: pnpm lint
       - name: Typecheck

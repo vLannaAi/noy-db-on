@@ -5,11 +5,12 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "build": "pnpm -r build",
-    "test": "vitest run",
-    "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck",
     "check:architecture": "node scripts/check-architecture.mjs",
-    "check:peer-floor": "node scripts/check-peer-floor.mjs"
+    "check:declared-deps": "node scripts/check-declared-deps.mjs",
+    "check:peer-floor": "node scripts/check-peer-floor.mjs",
+    "lint": "pnpm -r lint",
+    "test": "vitest run",
+    "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
