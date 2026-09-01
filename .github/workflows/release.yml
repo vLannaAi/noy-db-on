@@ -414,158 +414,126 @@ jobs:
             echo "hand-edits a correct release."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Docs bridge (spec: docs/superpowers/specs/2026-07-30-docs-bridge-design.md) ──
+  # ── Notify noy-db-docs ───────────────────────────────────────────────
   #
-  # Builds the machine-readable release payload (docs-bridge.json), attaches
-  # it to the GitHub Release as an asset, and opens a `doc-sync needed` issue
-  # in noy-db-docs — the same cross-repo pattern noy-db's release.yml uses.
+  # Files a `doc-sync needed` issue in noy-db-docs naming every package and
+  # version this release published.
   #
-  # continue-on-error at the JOB level: a docs-side outage or missing
-  # DOCS_SYNC_TOKEN must never fail a publish that already succeeded.
-  # DOCS_SYNC_TOKEN is a fine-grained PAT with Issues:write on
-  # vLannaAi/noy-db-docs (Settings → Secrets); without it the `gh issue
-  # create` step fails non-zero (unauthenticated) and only this job's
-  # continue-on-error absorbs it (job shows red-but-ignored; publish and
-  # the asset upload are unaffected) — doc-sync is then triggered by hand.
+  # There is deliberately NO docs-bridge.json payload. A `docs-bridge` job was
+  # inherited here from noy-db-to and could never have run: it invoked
+  # scripts/docs-bridge/build-payload.mjs, which came with no extraction. And
+  # porting it is not a copy — that script filters `d.name.startsWith('to-')`
+  # BY DESIGN, to protect the producer parity noy-db-docs' sync/bridge.mjs
+  # depends on. Run here it emits zero packages and trips its own non-empty
+  # guard, so a verbatim port swaps a job that failed GREEN for one that fails
+  # red and still never notifies anyone.
   #
-  # The payload is built, validated, and attached to the release on EVERY
-  # publish, both channels, no exceptions — the asset is the permanent
-  # record (design: noy-db-docs/docs/superpowers/specs/
-  # 2026-08-05-family-channel-policy-design.md §3, superseding the
-  # `dist_tag == 'latest'` job gate this job used to carry).
+  # What noy-db-docs actually consumes is the ISSUE BODY: its pin check reads
+  # the package list from the doc-sync issue, never from the Release body
+  # (measured — the sync issues carry the package lines; Release bodies carry
+  # none). So the list below IS the delta, and this job is the whole bridge.
   #
-  # Only the `gh issue create` step below is gated, on two independent
-  # conditions:
-  #   (a) Active rail — DOC_SYNC_CHANNELS lists which npm dist-tag channels
-  #       are currently synced to docs. Pre-1.0 that's `next` only; `latest`
-  #       is parked (still gets its payload asset, opens no issue) until the
-  #       rail table flips at 1.0.
-  #   (b) Real delta — some package in the payload is `added`/`updated`, or
-  #       carries a non-empty changelog. An all-`version-only` payload opens
-  #       nothing even on an active rail.
+  # `continue-on-error` at JOB level, deliberately: by the time this runs the
+  # publish has already succeeded, and a docs-side outage must not turn a
+  # completed publish into a red release. The cost is that "non-fatal" and
+  # "invisible" are the same setting — which has silently eaten releases
+  # elsewhere in this family — so the `if: failure()` step below writes a loud
+  # summary line. Non-fatal, never silent.
   #
-  # Both gates log their reason clearly to the workflow output so a green
-  # run with no issue is legible, not silent.
-  #
-  # noy-db/.github/workflows/release.yml gates its equivalent job the same
-  # way — keep the two in step.
-  docs-bridge:
-    name: Docs bridge payload + notify
+  # Requires DOCS_SYNC_TOKEN: a fine-grained PAT with Issues:write on
+  # vLannaAi/noy-db-docs. This repo's own GITHUB_TOKEN cannot write there.
+  # When it is absent the step fails LOUDLY rather than skipping, because a
+  # bridge that quietly does nothing is the exact failure this job replaced.
+  notify-docs:
+    name: Notify noy-db-docs
     needs: publish
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     continue-on-error: true
-    env:
-      # Space-separated list of npm dist-tag channels currently synced to
-      # docs. Pre-1.0: `next` only. At 1.0 this becomes `next latest`.
-      DOC_SYNC_CHANNELS: next
-    permissions:
-      contents: write   # gh release upload (asset on THIS repo's release)
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          package-manager-cache: false
-
-      - name: Enable corepack (pnpm)
-        run: corepack enable
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      # The capability dump imports each package's SOURCE. In noy-db-to a
-      # package importing a workspace sibling resolved it through its exports
-      # map into dist/, so the dump needed built dists on a fresh runner
-      # (first observed: v0.3.0-pre.4, "Failed to resolve entry"). ⚠️ THAT CASE
-      # CANNOT ARISE HERE — measured 2026-09-01, this repo has ZERO internal
-      # dependency edges, and check:versions-uniform reports that count on
-      # every run so the day one is added is visible. The build stays: the six
-      # hub-binding packages resolve @noy-db/hub through its exports map into
-      # dist/ the same way, and that dependency is real.
-      - name: Build
-        run: pnpm build
-
-      - name: Build payload
-        run: |
-          DOCS_BRIDGE_CAPS_OUT=/tmp/caps.json pnpm vitest run scripts/__tests__/docs-bridge-capabilities.test.ts
-          node scripts/docs-bridge/build-payload.mjs \
-            --caps /tmp/caps.json \
-            --tag "${{ github.event.release.tag_name }}" \
-            --channel "${{ needs.publish.outputs.dist_tag }}" \
-            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            > /tmp/docs-bridge.json
-          node -e "const p=require('/tmp/docs-bridge.json'); if (p.bridge!==1||!p.packages.length) process.exit(1); console.log('payload ok:', p.packages.length, 'packages')"
-
-      - name: Attach payload to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" /tmp/docs-bridge.json --clobber
-
-      - name: Open doc-sync issue in noy-db-docs
+      - name: Open or update the doc-sync issue
         env:
           GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          CHANNEL: ${{ needs.publish.outputs.dist_tag }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.event.release.tag_name }}
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          CHANNEL="${{ needs.publish.outputs.dist_tag }}"
-          ASSET_URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/docs-bridge.json"
+          set -euo pipefail
 
-          # Gate (a): active rail. DOC_SYNC_CHANNELS is a space-separated list.
-          if ! echo " $DOC_SYNC_CHANNELS " | grep -q " $CHANNEL "; then
-            echo "No doc-sync issue opened: channel '$CHANNEL' is parked (DOC_SYNC_CHANNELS=\"$DOC_SYNC_CHANNELS\"). Payload asset is still attached to the release." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::DOCS_SYNC_TOKEN is not set — noy-db-docs was NOT notified of this publish."
+            echo "::error::Add a fine-grained PAT with Issues:write on vLannaAi/noy-db-docs, or file the doc-sync by hand."
+            exit 1
           fi
 
-          # Gate (b): real delta. An all-version-only payload with no
-          # changelog text anywhere is not worth an issue.
-          if ! node --input-type=module -e "
-            import { hasRealDelta } from './scripts/docs-bridge/build-payload.mjs'
-            import { readFileSync } from 'node:fs'
-            const p = JSON.parse(readFileSync('/tmp/docs-bridge.json', 'utf8'))
-            process.exit(hasRealDelta(p) ? 0 : 1)
-          "; then
-            echo "No doc-sync issue opened: payload has no delta (every package is version-only with no changelog) on channel '$CHANNEL'. Payload asset is still attached to the release." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
+          # The package list is the payload. Assert a COUNT rather than
+          # absence-of-error: an empty list and a failed glob look identical,
+          # and filing an empty doc-sync issue trains people to close them
+          # unread — which is the reason the old bridge gated on a real delta.
+          PACKAGES=$(for f in on-*/package.json; do
+            node -p "const j = require('./$f'); j.name + '@' + j.version"
+          done | sort)
+          COUNT=$(printf '%s\n' "$PACKAGES" | grep -c . || true)
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::No on-* packages found — refusing to file an empty doc-sync issue."
+            exit 1
           fi
 
           {
-            echo "noy-db-on \`$TAG\` was just published to npm dist-tag \`$CHANNEL\`."
+            echo "\`noy-db-on\` published **$TAG** to \`@$CHANNEL\`."
             echo ""
-            echo "- Machine-readable payload: $ASSET_URL"
-            echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Published packages ($COUNT):"
             echo ""
-            echo "Per-store deltas:"
-            node -e "
-              const p = require('/tmp/docs-bridge.json');
-              for (const s of p.packages) console.log('- ' + s.name + ' — ' + s.changeType);
-            "
+            echo '```'
+            echo "$PACKAGES"
+            echo '```'
             echo ""
-            echo "Run the doc-sync with the bridge: \`node scripts/sync/sync.mjs --partition adapters --bridge <downloaded docs-bridge.json>\` — see docs/doc-sync.md."
-          } > /tmp/doc-sync-issue-body.md
-          gh issue create -R vLannaAi/noy-db-docs \
-            --title "doc-sync needed: noy-db-on $TAG @$CHANNEL" \
-            --body-file /tmp/doc-sync-issue-body.md
+            echo "Run the doc-sync against these versions and update the pins."
+            echo ""
+            echo "There is no \`docs-bridge.json\` asset for this producer, by design — the payload"
+            echo "builder is \`to-*\`-scoped, so **the list above is the delta**. Do not wait for an"
+            echo "asset that will never arrive, and do not read its absence as nothing having shipped."
+            echo ""
+            echo "Release: $RELEASE_URL"
+          } > /tmp/doc-sync.md
 
-      # This job is continue-on-error, which is right — a docs outage must not
-      # fail a publish that already succeeded. But it means a failure here is a
-      # red job inside a green run, with nothing in the summary to notice. That
-      # is exactly how #93 hid: the bridge threw on 0.6.0-pre.2 AND pre.3, and
-      # both runs reported success. Make the failure say so out loud.
-      - name: Report bridge failure loudly
+          cat /tmp/doc-sync.md >> "$GITHUB_STEP_SUMMARY"
+
+          # TITLE is built ONCE and reused by the search, the exact-match filter
+          # and the create. If those drift, the idempotency search stops matching
+          # what `create` writes and every re-run files a duplicate, silently.
+          # The repo name is not decoration: two producers can carry the same tag.
+          TITLE="doc-sync needed: noy-db-on $TAG @$CHANNEL"
+
+          NUM=$(gh issue list -R vLannaAi/noy-db-docs --state open --limit 20 \
+            --search "$TITLE in:title" \
+            --json number,title --jq ".[] | select(.title == \"$TITLE\") | .number" | head -1)
+
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" -R vLannaAi/noy-db-docs --body-file /tmp/doc-sync.md
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Commented on existing doc-sync issue #$NUM." >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh issue create -R vLannaAi/noy-db-docs --title "$TITLE" --body-file /tmp/doc-sync.md
+          fi
+
+      # continue-on-error already swallowed any failure at job level, so this
+      # cannot affect the publish. It exists so that "the docs were notified"
+      # and "the run was green" stop being the same observation.
+      - name: Surface a notify failure in the run summary
         if: failure()
         run: |
           {
-            echo "### ⚠️ Docs bridge FAILED — publish was NOT affected"
+            echo "## ⚠️ noy-db-docs was NOT notified — the publish succeeded, this did not"
             echo ""
-            echo "The release published fine, but the docs-bridge job did not complete."
-            echo "Likely consequences: **no \`docs-bridge.json\` asset** on the release,"
-            echo "and **no doc-sync issue** opened in noy-db-docs."
+            echo "\`${{ github.event.release.tag_name }}\` is published and installable."
+            echo "Only the doc-sync notification failed, so **noy-db-docs does not know about it**."
             echo ""
-            echo "- Release: \`${{ github.event.release.tag_name }}\`"
-            echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo ""
-            echo "Check the asset is present before treating doc-sync as done, then run it by hand."
+            echo "File it by hand: an issue in \`vLannaAi/noy-db-docs\` titled"
+            echo "\`doc-sync needed: noy-db-on ${{ github.event.release.tag_name }} @${{ needs.publish.outputs.dist_tag }}\`"
+            echo "listing every published package and its version."
           } >> "$GITHUB_STEP_SUMMARY"
