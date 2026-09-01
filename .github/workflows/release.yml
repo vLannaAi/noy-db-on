@@ -1,0 +1,537 @@
+name: Release to npm
+
+# Strict release pipeline for the noy-db-on storage adapters.
+#
+# Triggered on GitHub Release `published`. Runs the full verification
+# gate (install + build + lint + typecheck + test) on a clean checkout
+# at the release tag, and only publishes if every gate passes.
+#
+# Publishes with `--provenance` so the npm registry attests a
+# verifiable cryptographic link between the tarball and this workflow
+# run (supply-chain integrity). Requires `id-token: write` permission
+# on the job.
+#
+# ── npm dist-tag routing ─────────────────────────────────────────────
+#
+#   • `latest` — the default install (`pnpm add @noy-db/to-aws-s3`). Used
+#     for stable themed releases.
+#   • `next`   — opt-in early-adopter channel (`pnpm add @noy-db/to-aws-s3@next`).
+#
+# Routing rules:
+#   - `release` event with `prerelease: true` (the "Set as a pre-release"
+#     checkbox on the GitHub Release form) → publishes with `--tag next`.
+#   - `release` event with `prerelease: false` → publishes with `--tag latest`.
+#   - Manual `workflow_dispatch` → uses the `tag` input (default `latest`).
+#
+# Both paths preserve `--provenance` and the strict verification gate.
+# The chosen tag is echoed to the workflow log + the run summary before
+# any publish runs, so an unintended target shows up immediately.
+#
+# Setup required (one-time, in repo Settings → Secrets and variables):
+#   - NPM_TOKEN (npm automation token with publish access to @noy-db/*)
+#   - GitHub Actions must have "Read and write permissions" under
+#     Settings → Actions → General → Workflow permissions
+#
+# Manual dispatch is available for first-publish or re-publish debugging;
+# it requires typing PUBLISH into the confirm field so accidental triggers
+# can't publish by mistake. The `tag` input lets a maintainer override
+# the dist-tag without touching this file.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type PUBLISH to confirm manual trigger'
+        required: true
+        default: ''
+      tag:
+        description: 'npm dist-tag (latest | next | canary | rc | beta | alpha)'
+        required: false
+        default: 'latest'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/release.yml']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Gate 1: strict verification ──────────────────────────────────────
+  verify:
+    name: Verify (strict)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.event.inputs.confirm == 'PUBLISH' || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          package-manager-cache: false
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Architecture invariants
+        run: pnpm check:architecture
+
+      - name: Build
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      # The root package.json version is the lockstep canonical for the repo.
+      # Per-store version==tag enforcement (Step 1b) is added when stores land.
+      - name: Verify package.json version matches release tag
+        if: github.event_name == 'release'
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "❌ noy-db-on storage adapters version ($PKG_VERSION) does not match release tag ($VERSION)"
+            exit 1
+          fi
+          echo "✅ noy-db-on@$PKG_VERSION matches release tag v$VERSION"
+
+      # The dist-tag is routed entirely by the "Set as a pre-release" checkbox on
+      # the Release form, so a forgotten tick publishes a pre-release to @latest.
+      # Recovery is awkward but NOT impossible from CI, and the distinction
+      # matters now that align-dist-tags.mjs in this repo depends on it:
+      # `npm dist-tag add` DOES work with the automation token (verified by
+      # klum-db against the live registry), because that token bypasses 2FA. It
+      # is the LOCAL `~/.npmrc` path that needs an interactive OTP. `npm
+      # deprecate` is a different endpoint and has NOT been tested this way —
+      # do not widen this into "account-changing writes are automatable".
+      #
+      # This repo is the one that most needs the guard and was the last to get
+      # it. Its @latest is already broken — all 17 on-*@0.5.0 versions are
+      # deprecated, and it cannot be repaired with anything short of a stable
+      # release, which is blocked. Landing a pre-release on top of that would
+      # add a second, independent defect to the same tag.
+      #
+      # It has also already happened here by a different route: to-browser-fs
+      # debuted in 0.6.0-pre.2, and npm sets `latest` on a package's FIRST
+      # publish regardless of --tag, so to-browser-fs@latest is pinned to a
+      # pre-release and later `--tag next` publishes never move it. That path is
+      # not what this step catches — no guard can, it is npm's own behaviour —
+      # but it is the same end state, which is the point.
+      #
+      # Ported from noy-db-ui#22 via klum-db#81 / noy-db#1003; mechanism is
+      # identical so all four repos behave the same.
+      #
+      # Only this direction is blocked: a STABLE version published to @next is
+      # harmless and recoverable, so it stays allowed.
+      - name: Refuse a semver pre-release routed to @latest
+        if: github.event_name == 'release'
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          if [ "${{ github.event.release.prerelease }}" != "true" ] && [ "${VERSION#*-}" != "$VERSION" ]; then
+            echo "::error::$VERSION is a semver pre-release, but this Release is not marked as a pre-release."
+            echo "::error::Publishing would route it to @latest, which is already broken here (17 deprecated 0.5.0 versions)."
+            echo "::error::Tick 'Set as a pre-release' on the Release and re-run."
+            exit 1
+          fi
+          echo "✅ routing check passed (version=$VERSION, prerelease=${{ github.event.release.prerelease }})"
+
+  # ── Gate 1b: the declared peer range is TRUE at its floor ────────────
+  #
+  # `verify` above proves nothing about the peer range: every one of its gates
+  # runs against the DEV PIN, so all of them stay green no matter how wrong the
+  # range is. Only this job installs a different hub.
+  #
+  # It lives in its own workflow rather than as a step in `verify` on purpose —
+  # `verify` carries a pnpm store cache, and peer-floor.yml deliberately has
+  # none, with a comment explaining why. Inlining it would put that cache in
+  # front of the guard and leave the reasoning stranded in a file that no
+  # longer holds the check.
+  #
+  # `ref` must be passed: the called workflow would otherwise check out the
+  # default branch and gate `main` instead of the tag being published.
+  peer-floor:
+    name: Peer floor
+    if: github.event_name == 'release' || github.event.inputs.confirm == 'PUBLISH' || github.event_name == 'push'
+    uses: ./.github/workflows/peer-floor.yml
+    with:
+      ref: ${{ github.event.release.tag_name || github.ref }}
+
+  # ── Gate 2: publish with provenance ──────────────────────────────────
+  #
+  # Explicit event guard: publish only runs on:
+  #   - a `release` event (someone created a GitHub Release), or
+  #   - a `workflow_dispatch` with `confirm: PUBLISH` typed in.
+  #
+  # The `verify` job above also runs on `push` to main when this file
+  # changes (so workflow edits get tested), but the publish step
+  # MUST NOT run on that path — otherwise pushing a workflow edit
+  # could auto-publish to npm without explicit confirmation.
+  publish:
+    name: Publish to npm
+    needs: [verify, peer-floor]
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'PUBLISH')
+    runs-on: ubuntu-latest
+    outputs:
+      dist_tag: ${{ steps.dist_tag.outputs.tag }}
+    permissions:
+      contents: read
+      id-token: write   # required for npm --provenance
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          package-manager-cache: false
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # Resolve the npm dist-tag for this run. Computed once + echoed
+      # to the run summary so an unintended target shows up before any
+      # publish runs. Allowlist guards against typos in workflow_dispatch
+      # input — the publish step refuses to run with an unknown tag.
+      - name: Resolve npm dist-tag
+        id: dist_tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+              TAG="next"
+              REASON="release event, prerelease=true"
+            else
+              TAG="latest"
+              REASON="release event, prerelease=false"
+            fi
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+            REASON="workflow_dispatch tag input"
+          else
+            TAG="latest"
+            REASON="default"
+          fi
+
+          case "$TAG" in
+            latest|next|canary|rc|beta|alpha) ;;
+            *)
+              echo "❌ Refusing to publish: tag '$TAG' is not in the allowlist (latest|next|canary|rc|beta|alpha)."
+              exit 1
+              ;;
+          esac
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "### npm dist-tag" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Tag:** \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Reason:** $REASON" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$TAG" = "latest" ]; then
+            echo "Consumers run \`pnpm add @noy-db/to-aws-s3\` (default install)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Consumers run \`pnpm add @noy-db/to-aws-s3@$TAG\` (opt-in channel)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Check which npm account the token belongs to. If this step fails,
+      # the token is invalid; if it shows the wrong user, the user's account
+      # doesn't own @noy-db/*.
+      - name: Check npm auth (whoami)
+        run: |
+          WHOAMI=$(npm whoami 2>&1) && echo "npm user: $WHOAMI" || echo "npm whoami failed: $WHOAMI"
+          echo "npm user: ${WHOAMI:-failed}" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true
+
+      # Recursive publish over all @noy-db/on-* stores. `--no-git-checks`
+      # because the publish job checks out a tag, not a branch — pnpm's
+      # default branch-clean check would fail otherwise. `--provenance`
+      # requires id-token: write (granted on the job above). pnpm skips a
+      # version already on the registry, so re-runs are safe.
+      - name: Publish stores
+        run: |
+          set -o pipefail
+          echo "Publishing @noy-db/on-* with --tag ${{ steps.dist_tag.outputs.tag }}"
+          pnpm -r publish \
+            --access public \
+            --tag '${{ steps.dist_tag.outputs.tag }}' \
+            --no-git-checks \
+            --provenance 2>&1 | tee /tmp/publish.log
+          EXIT=${PIPESTATUS[0]}
+          if [ "$EXIT" -ne 0 ]; then
+            echo "### Publish failed" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"; cat /tmp/publish.log >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$EXIT"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summarise
+        run: |
+          echo "### Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release: \`${{ github.event.release.tag_name || github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- npm dist-tag: \`${{ steps.dist_tag.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Provenance: enabled (look for the ✓ on https://www.npmjs.com/package/@noy-db/to-aws-s3)" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Align dist-tags after a STABLE publish ───────────────────────────
+  #
+  # `release.yml` routes an unmarked Release to `--tag latest`, which sets
+  # `latest` to the stable and LEAVES `next` on the last pre-release. Since
+  # `0.6.0 > 0.6.0-pre.7`, `@next` then sits BEHIND `@latest` — the "lying tag"
+  # state the family sweep flags, created by the act of cutting a stable.
+  #
+  # Pointing `next` at the stable too is self-correcting: the next pre-release
+  # moves it forward and the normal invariant returns.
+  #
+  # NOT continue-on-error, deliberately, and unlike the docs bridge. That job is
+  # non-fatal because a missing payload is recoverable and must not fail a
+  # publish that already succeeded. This one is different: a package left behind
+  # makes `npm i @noy-db/to-x@next` resolve something OLDER than `@latest` — a
+  # wrong answer, not a missing nicety. It must be loud.
+  #
+  # Only fires when the publish actually routed to `latest`.
+  align-dist-tags:
+    name: Align dist-tags (stable only)
+    needs: publish
+    if: github.event_name == 'release' && needs.publish.outputs.dist_tag == 'latest'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          package-manager-cache: false
+          registry-url: 'https://registry.npmjs.org'
+      - name: Show the plan
+        run: node scripts/align-dist-tags.mjs --version="${GITHUB_REF_NAME#v}" --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Align `next` onto the stable
+        run: node scripts/align-dist-tags.mjs --version="${GITHUB_REF_NAME#v}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Report failure loudly
+        if: failure()
+        run: |
+          {
+            echo "### ⚠️ dist-tag alignment FAILED — the publish itself succeeded"
+            echo ""
+            echo "The script's own log distinguishes two cases and they need OPPOSITE actions."
+            echo "Read it before touching anything:"
+            echo ""
+            echo "- **\`dist-tag add\` FAILED** — those packages genuinely need repair, and the"
+            echo "  log lists the exact command per package."
+            echo "- **refused on the before-state** — \`latest\` was not the expected version, so"
+            echo "  nothing was written. Do NOT hand-repair; check that the stable actually"
+            echo "  published and that the version passed in was right."
+            echo ""
+            echo "A package written-but-unconfirmed is NOT a failure and does not reach this"
+            echo "block — \`npm view\` is CDN-served and lags writes. Repairing one of those"
+            echo "hand-edits a correct release."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Docs bridge (spec: docs/superpowers/specs/2026-07-30-docs-bridge-design.md) ──
+  #
+  # Builds the machine-readable release payload (docs-bridge.json), attaches
+  # it to the GitHub Release as an asset, and opens a `doc-sync needed` issue
+  # in noy-db-docs — the same cross-repo pattern noy-db's release.yml uses.
+  #
+  # continue-on-error at the JOB level: a docs-side outage or missing
+  # DOCS_SYNC_TOKEN must never fail a publish that already succeeded.
+  # DOCS_SYNC_TOKEN is a fine-grained PAT with Issues:write on
+  # vLannaAi/noy-db-docs (Settings → Secrets); without it the `gh issue
+  # create` step fails non-zero (unauthenticated) and only this job's
+  # continue-on-error absorbs it (job shows red-but-ignored; publish and
+  # the asset upload are unaffected) — doc-sync is then triggered by hand.
+  #
+  # The payload is built, validated, and attached to the release on EVERY
+  # publish, both channels, no exceptions — the asset is the permanent
+  # record (design: noy-db-docs/docs/superpowers/specs/
+  # 2026-08-05-family-channel-policy-design.md §3, superseding the
+  # `dist_tag == 'latest'` job gate this job used to carry).
+  #
+  # Only the `gh issue create` step below is gated, on two independent
+  # conditions:
+  #   (a) Active rail — DOC_SYNC_CHANNELS lists which npm dist-tag channels
+  #       are currently synced to docs. Pre-1.0 that's `next` only; `latest`
+  #       is parked (still gets its payload asset, opens no issue) until the
+  #       rail table flips at 1.0.
+  #   (b) Real delta — some package in the payload is `added`/`updated`, or
+  #       carries a non-empty changelog. An all-`version-only` payload opens
+  #       nothing even on an active rail.
+  #
+  # Both gates log their reason clearly to the workflow output so a green
+  # run with no issue is legible, not silent.
+  #
+  # noy-db/.github/workflows/release.yml gates its equivalent job the same
+  # way — keep the two in step.
+  docs-bridge:
+    name: Docs bridge payload + notify
+    needs: publish
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      # Space-separated list of npm dist-tag channels currently synced to
+      # docs. Pre-1.0: `next` only. At 1.0 this becomes `next latest`.
+      DOC_SYNC_CHANNELS: next
+    permissions:
+      contents: write   # gh release upload (asset on THIS repo's release)
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The capability dump imports each store's SOURCE, but stores that
+      # import a workspace sibling (to-cloudflare-r2 → @noy-db/to-aws-s3,
+      # to-supabase → @noy-db/to-postgres) resolve that sibling through its
+      # exports map into dist/ — so the dump needs built dists on a fresh
+      # runner (first observed: v0.3.0-pre.4 run, "Failed to resolve entry").
+      - name: Build
+        run: pnpm build
+
+      - name: Build payload
+        run: |
+          DOCS_BRIDGE_CAPS_OUT=/tmp/caps.json pnpm vitest run scripts/__tests__/docs-bridge-capabilities.test.ts
+          node scripts/docs-bridge/build-payload.mjs \
+            --caps /tmp/caps.json \
+            --tag "${{ github.event.release.tag_name }}" \
+            --channel "${{ needs.publish.outputs.dist_tag }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /tmp/docs-bridge.json
+          node -e "const p=require('/tmp/docs-bridge.json'); if (p.bridge!==1||!p.packages.length) process.exit(1); console.log('payload ok:', p.packages.length, 'packages')"
+
+      - name: Attach payload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" /tmp/docs-bridge.json --clobber
+
+      - name: Open doc-sync issue in noy-db-docs
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          CHANNEL="${{ needs.publish.outputs.dist_tag }}"
+          ASSET_URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/docs-bridge.json"
+
+          # Gate (a): active rail. DOC_SYNC_CHANNELS is a space-separated list.
+          if ! echo " $DOC_SYNC_CHANNELS " | grep -q " $CHANNEL "; then
+            echo "No doc-sync issue opened: channel '$CHANNEL' is parked (DOC_SYNC_CHANNELS=\"$DOC_SYNC_CHANNELS\"). Payload asset is still attached to the release." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Gate (b): real delta. An all-version-only payload with no
+          # changelog text anywhere is not worth an issue.
+          if ! node --input-type=module -e "
+            import { hasRealDelta } from './scripts/docs-bridge/build-payload.mjs'
+            import { readFileSync } from 'node:fs'
+            const p = JSON.parse(readFileSync('/tmp/docs-bridge.json', 'utf8'))
+            process.exit(hasRealDelta(p) ? 0 : 1)
+          "; then
+            echo "No doc-sync issue opened: payload has no delta (every package is version-only with no changelog) on channel '$CHANNEL'. Payload asset is still attached to the release." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "noy-db-on \`$TAG\` was just published to npm dist-tag \`$CHANNEL\`."
+            echo ""
+            echo "- Machine-readable payload: $ASSET_URL"
+            echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "Per-store deltas:"
+            node -e "
+              const p = require('/tmp/docs-bridge.json');
+              for (const s of p.packages) console.log('- ' + s.name + ' — ' + s.changeType);
+            "
+            echo ""
+            echo "Run the doc-sync with the bridge: \`node scripts/sync/sync.mjs --partition adapters --bridge <downloaded docs-bridge.json>\` — see docs/doc-sync.md."
+          } > /tmp/doc-sync-issue-body.md
+          gh issue create -R vLannaAi/noy-db-docs \
+            --title "doc-sync needed: noy-db-on $TAG @$CHANNEL" \
+            --body-file /tmp/doc-sync-issue-body.md
+
+      # This job is continue-on-error, which is right — a docs outage must not
+      # fail a publish that already succeeded. But it means a failure here is a
+      # red job inside a green run, with nothing in the summary to notice. That
+      # is exactly how #93 hid: the bridge threw on 0.6.0-pre.2 AND pre.3, and
+      # both runs reported success. Make the failure say so out loud.
+      - name: Report bridge failure loudly
+        if: failure()
+        run: |
+          {
+            echo "### ⚠️ Docs bridge FAILED — publish was NOT affected"
+            echo ""
+            echo "The release published fine, but the docs-bridge job did not complete."
+            echo "Likely consequences: **no \`docs-bridge.json\` asset** on the release,"
+            echo "and **no doc-sync issue** opened in noy-db-docs."
+            echo ""
+            echo "- Release: \`${{ github.event.release.tag_name }}\`"
+            echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "Check the asset is present before treating doc-sync as done, then run it by hand."
+          } >> "$GITHUB_STEP_SUMMARY"

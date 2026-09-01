@@ -1,0 +1,25 @@
+{
+  "name": "noy-db-on",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "check:peer-floor": "node scripts/check-peer-floor.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.18.0",
+    "semver": "^7.6.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.21.0",
+    "vitest": "^3.0.0",
+    "happy-dom": "^18.0.0"
+  }
+}

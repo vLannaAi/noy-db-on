@@ -1,0 +1,107 @@
+name: Peer floor
+
+# Does every store actually COMPILE against the oldest @noy-db/hub its peer
+# range admits?
+#
+# Deliberately NOT part of ci.yml. Every gate there — build, lint, typecheck,
+# 1717 tests — runs against the DEV PIN, so all of them stay green no matter how
+# wrong the declared peer range is. This job is the only one that installs a
+# different hub, which is why it needs the network and its own workflow.
+#
+# It exists because the gap shipped twice:
+#   #89  16 packages advertised ^0.3.0 || ^0.4.0 || ^0.5.0 while importing
+#        symbols that exist only from 0.6.0-pre. The same defect was live on the
+#        0.5.0 stable line and had to be repaired by deprecating 17 versions.
+#   #84  to-drive / to-icloud needed StoreLocator.register() to be generic,
+#        which landed in 0.6.0-pre.11. Symbol presence does NOT catch that —
+#        StoreFactory exists at pre.0, it just cannot accept the argument.
+#        Only compiling against the floor finds it.
+#
+# Triggers are scoped to when a range can actually become false. That is NOT
+# only a manifest edit:
+#
+#   - a MANIFEST edit changes the declared range directly
+#   - a SOURCE edit changes what the code needs, which falsifies a range that
+#     was true yesterday — adopting a symbol, or a subpath, that the floor does
+#     not have. noy-db-ui hit exactly this: a subpath migration touching no
+#     manifest broke the build at its own declared floor, and its guard stayed
+#     silent because the path filter could not see a source change.
+#
+# So `on-*/src/**` is in the filter. Store tests, tsup/vitest configs and
+# anything else outside `src/` are deliberately excluded — none of them ship,
+# so none of them can make a published range false.
+#
+# `workflow_call` exists because those path-scoped triggers match NO part of a
+# `release` event — so before it was added, release.yml could publish a peer
+# range this guard would have rejected. The gate that only runs when it cannot
+# stop anything is the same defect class it was written to catch. The caller
+# MUST pass `ref`: without it a release is gated against the default branch
+# rather than against the tag being published.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Ref to check out — the release TAG, not the default branch'
+        required: false
+        type: string
+  pull_request:
+    paths: ['**/package.json', 'on-*/src/**', 'scripts/check-peer-floor.mjs', '.github/workflows/peer-floor.yml']
+  push:
+    branches: [main]
+    paths: ['**/package.json', 'on-*/src/**', 'scripts/check-peer-floor.mjs', '.github/workflows/peer-floor.yml']
+  workflow_dispatch:
+
+# The load-bearing half here is `cancel-in-progress`, not the group key.
+#
+# A job that gates a publish must never be cancellable. The release path
+# happens to be isolated already — a `release` event runs under the TAG
+# (`refs/tags/vX`), so it never shares a group with a push to `main` — but that
+# is a property of how GitHub sets `github.ref` for release events, NOT
+# something this config states or guarantees. Scoping cancellation to
+# `pull_request` converts that coincidence into a stated invariant. PRs are the
+# only place cancelling a superseded run is a saving rather than a hazard.
+#
+# Residual, and deliberately left alone: a direct push to `main` and
+# release.yml's push-path call DO share a group — both are `event_name: push`
+# on `refs/heads/main` (inside a `workflow_call`, `github.event_name` and
+# `github.ref` are the CALLER's, and `inputs.ref` falls back to `github.ref`
+# there anyway). With cancel-in-progress false they QUEUE rather than cancel,
+# which is the safe outcome. Do not widen the key to separate them.
+#
+# Family standard — klum-db, doi-db and noy-db-ui carry this block verbatim.
+concurrency:
+  group: peer-floor-${{ inputs.ref || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  peer-floor:
+    name: Compile against the advertised floor
+    runs-on: ubuntu-latest
+    steps:
+      # `inputs.ref` is empty on the pull_request / push / dispatch paths, and
+      # checkout then falls back to the triggering ref — its normal behavior.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      # No pnpm store cache here on purpose: this job's whole job is to resolve
+      # hub versions that are NOT the dev pin, and a warm cache keyed on the
+      # lockfile would mask a floor that cannot even be installed.
+      - name: Install (dev pin)
+        run: pnpm install --frozen-lockfile
+
+      - name: Show the plan
+        run: node scripts/check-peer-floor.mjs --dry-run
+
+      - name: Compile every store against its declared floor
+        run: node scripts/check-peer-floor.mjs
