@@ -470,13 +470,24 @@ jobs:
             exit 1
           fi
 
-          # The package list is the payload. Assert a COUNT rather than
-          # absence-of-error: an empty list and a failed glob look identical,
-          # and filing an empty doc-sync issue trains people to close them
-          # unread — which is the reason the old bridge gated on a real delta.
-          PACKAGES=$(for f in on-*/package.json; do
-            node -p "const j = require('./$f'); j.name + '@' + j.version"
-          done | sort)
+          # The package list is the payload. Enumerated INSIDE node rather than
+          # by a shell glob, which is load-bearing: with no matches bash leaves
+          # the glob LITERAL, node throws MODULE_NOT_FOUND, and `set -e` kills
+          # the step BEFORE the count is taken — so the guard below could never
+          # fire in the one case it names, and the operator got a raw node stack
+          # trace instead of a sentence. Private manifests are excluded too,
+          # matching every other gate here: a repo whose only on-* directory was
+          # private would otherwise file an issue naming an unpublished package.
+          PACKAGES=$(node -e "
+            const { readdirSync, existsSync, readFileSync } = require('node:fs')
+            const out = readdirSync('.')
+              .filter((d) => d.startsWith('on-') && existsSync(d + '/package.json'))
+              .map((d) => JSON.parse(readFileSync(d + '/package.json', 'utf8')))
+              .filter((j) => !j.private && j.name && j.version)
+              .map((j) => j.name + '@' + j.version)
+              .sort()
+            process.stdout.write(out.join('\n'))
+          ")
           COUNT=$(printf '%s\n' "$PACKAGES" | grep -c . || true)
           if [ "$COUNT" -eq 0 ]; then
             echo "::error::No on-* packages found — refusing to file an empty doc-sync issue."
@@ -507,11 +518,20 @@ jobs:
           # and the create. If those drift, the idempotency search stops matching
           # what `create` writes and every re-run files a duplicate, silently.
           # The repo name is not decoration: two producers can carry the same tag.
+          #
+          # The first match is taken IN JQ, not by `| head -1`: head closes the
+          # pipe, the producer takes SIGPIPE, `pipefail` propagates it and
+          # `set -e` kills the step — exit 141. That cannot happen with 0 or 1
+          # matches (head reaches EOF first); it fires only with TWO OR MORE,
+          # which is exactly the duplicate condition this search exists to
+          # detect. The recovery path would have died in the one situation it
+          # is for, and every normal release would have looked fine.
           TITLE="doc-sync needed: noy-db-on $TAG @$CHANNEL"
 
           NUM=$(gh issue list -R vLannaAi/noy-db-docs --state open --limit 20 \
             --search "$TITLE in:title" \
-            --json number,title --jq ".[] | select(.title == \"$TITLE\") | .number" | head -1)
+            --json number,title \
+            --jq "[.[] | select(.title == \"$TITLE\") | .number] | first // empty")
 
           if [ -n "$NUM" ]; then
             gh issue comment "$NUM" -R vLannaAi/noy-db-docs --body-file /tmp/doc-sync.md
