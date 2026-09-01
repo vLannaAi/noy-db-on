@@ -1,6 +1,6 @@
 {
   "name": "@noy-db/on-password",
-  "version": "0.7.0-pre.17",
+  "version": "0.7.0",
   "description": "Tier-2 password authenticator slot for noy-db. PBKDF2-SHA256 600K wraps the DEK set in its own keyring slot, distinct from the rarely-typed tier-1 phrase. Pair with @noy-db/on-email-otp or @noy-db/on-totp for the SaaS UX.",
   "license": "MIT",
   "author": "vLannaAi <vicio@lanna.ai>",
@@ -38,11 +38,11 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@noy-db/hub": "^0.7.0-pre.17"
+    "@noy-db/hub": "^0.7.0"
   },
   "devDependencies": {
-    "@noy-db/hub": "0.7.0-pre.17",
-    "@noy-db/test-ceremony-conformance": "0.7.0-pre.17",
+    "@noy-db/hub": "0.7.0",
+    "@noy-db/test-ceremony-conformance": "0.7.0",
     "happy-dom": "^18.0.0"
   },
   "keywords": [
