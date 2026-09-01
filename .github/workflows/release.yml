@@ -13,9 +13,9 @@ name: Release to npm
 #
 # ── npm dist-tag routing ─────────────────────────────────────────────
 #
-#   • `latest` — the default install (`pnpm add @noy-db/to-aws-s3`). Used
+#   • `latest` — the default install (`pnpm add @noy-db/on-password`). Used
 #     for stable themed releases.
-#   • `next`   — opt-in early-adopter channel (`pnpm add @noy-db/to-aws-s3@next`).
+#   • `next`   — opt-in early-adopter channel (`pnpm add @noy-db/on-password@next`).
 #
 # Routing rules:
 #   - `release` event with `prerelease: true` (the "Set as a pre-release"
@@ -110,19 +110,42 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # The root package.json version is the lockstep canonical for the repo.
-      # Per-store version==tag enforcement (Step 1b) is added when stores land.
-      - name: Verify package.json version matches release tag
+      # ⚠️ THE PORTED VERSION OF THIS GATE COULD NEVER PASS. It read
+      # `require('./package.json').version` from the ROOT manifest — the
+      # lockstep canonical in noy-db-to, whose root carries a version. THIS
+      # root is `private` and versionless, so the expression yielded the
+      # STRING "undefined" and the comparison failed for every possible tag.
+      # A premise true where it was written and false where it was pasted.
+      # Measured 2026-09-01, before this workflow had ever run.
+      #
+      # Now asserted where the version logic already lives, against the
+      # property that actually matters: EVERY package equals the tag, not
+      # merely equals the others. It also proves the lockstep @noy-db/*
+      # ranges are uniform and each dev pin is admitted by the peer range
+      # beside it — the #1228 shape, invisible to the suite by construction.
+      - name: Every package version matches the release tag
         if: github.event_name == 'release'
         run: |
           TAG="${{ github.event.release.tag_name }}"
-          VERSION="${TAG#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$PKG_VERSION" != "$VERSION" ]; then
-            echo "❌ noy-db-on storage adapters version ($PKG_VERSION) does not match release tag ($VERSION)"
-            exit 1
-          fi
-          echo "✅ noy-db-on@$PKG_VERSION matches release tag v$VERSION"
+          pnpm check:versions-uniform --expect "${TAG#v}"
+
+      - name: One version across the repo (non-release runs)
+        if: github.event_name != 'release'
+        run: pnpm check:versions-uniform
+
+      # git is not npm, made executable. This repo was extracted at
+      # 0.7.0-pre.17; noy-db then cut 0.7.0 for all nine of these packages and
+      # removed the family, so npm carried a version this repo had no record
+      # of. Three sessions established that by hand. This asks the registry.
+      #
+      # ⚠️ It FAILS CLOSED — exit 2 means "could not determine", which is NOT
+      # a pass. A registry timeout must never render as "the version is free".
+      # This is a pre-flight that GATES a decision, so it must stay fatal:
+      # `continue-on-error` looks like one knob and behaves like two, and is
+      # backwards here.
+      - name: Refuse a version npm already carries
+        if: github.event_name == 'release'
+        run: pnpm check:not-already-published
 
       # The dist-tag is routed entirely by the "Set as a pre-release" checkbox on
       # the Release form, so a forgotten tick publishes a pre-release to @latest.
@@ -134,11 +157,18 @@ jobs:
       # deprecate` is a different endpoint and has NOT been tested this way —
       # do not widen this into "account-changing writes are automatable".
       #
-      # This repo is the one that most needs the guard and was the last to get
-      # it. Its @latest is already broken — all 17 on-*@0.5.0 versions are
-      # deprecated, and it cannot be repaired with anything short of a stable
-      # release, which is blocked. Landing a pre-release on top of that would
-      # add a second, independent defect to the same tag.
+      # ⚠️ THIS JUSTIFICATION HAS EXPIRED — kept as a record, not a reason.
+      # The ported text said "@latest is already broken — all 17 on-*@0.5.0
+      # versions are deprecated, and it cannot be repaired with anything short
+      # of a stable release, which is blocked." Measured 2026-09-01: there are
+      # NINE packages here, not 17 (17 is a to-* count); @latest is 0.7.0, a
+      # STABLE, on all nine; and the packument's `deprecated` field is null.
+      # The stable release it called blocked HAS SHIPPED.
+      #
+      # The GUARD stays, because it is right for the general reason rather
+      # than the expired one: routing a semver pre-release to @latest makes it
+      # the default install, and npm will not let you take that back. Generalise
+      # the comment to the rule; do not extend the enumeration.
       #
       # It has also already happened here by a different route: to-browser-fs
       # debuted in 0.6.0-pre.2, and npm sets `latest` on a package's FIRST
@@ -277,9 +307,9 @@ jobs:
           echo "- **Reason:** $REASON" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [ "$TAG" = "latest" ]; then
-            echo "Consumers run \`pnpm add @noy-db/to-aws-s3\` (default install)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Consumers run \`pnpm add @noy-db/on-password\` (default install)." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Consumers run \`pnpm add @noy-db/to-aws-s3@$TAG\` (opt-in channel)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Consumers run \`pnpm add @noy-db/on-password@$TAG\` (opt-in channel)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # Check which npm account the token belongs to. If this step fails,
@@ -323,7 +353,7 @@ jobs:
           echo "- Release: \`${{ github.event.release.tag_name || github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- npm dist-tag: \`${{ steps.dist_tag.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Provenance: enabled (look for the ✓ on https://www.npmjs.com/package/@noy-db/to-aws-s3)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Provenance: enabled (look for the ✓ on https://www.npmjs.com/package/@noy-db/on-password)" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Align dist-tags after a STABLE publish ───────────────────────────
   #
@@ -338,7 +368,7 @@ jobs:
   # NOT continue-on-error, deliberately, and unlike the docs bridge. That job is
   # non-fatal because a missing payload is recoverable and must not fail a
   # publish that already succeeded. This one is different: a package left behind
-  # makes `npm i @noy-db/to-x@next` resolve something OLDER than `@latest` — a
+  # makes `npm i @noy-db/on-x@next` resolve something OLDER than `@latest` — a
   # wrong answer, not a missing nicety. It must be loud.
   #
   # Only fires when the publish actually routed to `latest`.
@@ -447,11 +477,15 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # The capability dump imports each store's SOURCE, but stores that
-      # import a workspace sibling (to-cloudflare-r2 → @noy-db/to-aws-s3,
-      # to-supabase → @noy-db/to-postgres) resolve that sibling through its
-      # exports map into dist/ — so the dump needs built dists on a fresh
-      # runner (first observed: v0.3.0-pre.4 run, "Failed to resolve entry").
+      # The capability dump imports each package's SOURCE. In noy-db-to a
+      # package importing a workspace sibling resolved it through its exports
+      # map into dist/, so the dump needed built dists on a fresh runner
+      # (first observed: v0.3.0-pre.4, "Failed to resolve entry"). ⚠️ THAT CASE
+      # CANNOT ARISE HERE — measured 2026-09-01, this repo has ZERO internal
+      # dependency edges, and check:versions-uniform reports that count on
+      # every run so the day one is added is visible. The build stays: the six
+      # hub-binding packages resolve @noy-db/hub through its exports map into
+      # dist/ the same way, and that dependency is real.
       - name: Build
         run: pnpm build
 

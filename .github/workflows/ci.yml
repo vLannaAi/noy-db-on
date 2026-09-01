@@ -50,6 +50,20 @@ jobs:
       # green either way (measured). Only a static check sees it.
       - name: Every package declares what it uses
         run: pnpm check:declared-deps
+
+      # Guards a PARTIAL bump: one version across all nine packages, every
+      # lockstep @noy-db/* range uniform, and each exact dev pin admitted by the
+      # peer range declared beside it. All four are invisible to the suite,
+      # which resolves workspace source and never has to satisfy a published
+      # range (that is the #1228 shape: locally correct, green everywhere, an
+      # ERESOLVE for the consumer).
+      #
+      # ⚠️ check:not-already-published is deliberately NOT here. It asks npm
+      # whether the version in the manifests already exists, which is TRUE for
+      # every commit between a publish and the next bump — correct as a release
+      # pre-flight, permanently red as a PR gate. It runs in release.yml.
+      - name: One version across the repo, lockstep ranges uniform
+        run: pnpm check:versions-uniform
       # This repo answers for the codemod rows naming ITS packages. hub shipped
       # them and can no longer check them — the packages moved here, so the
       # obligation did too. Nothing compiles a migration map.
