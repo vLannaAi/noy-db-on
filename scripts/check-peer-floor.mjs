@@ -1,4 +1,4 @@
-// check-peer-floor — does every store actually COMPILE against the oldest
+// check-peer-floor — does every package actually COMPILE against the oldest
 // @noy-db/hub its peer range admits?
 //
 // Why this exists, and why it is separate from check-architecture.mjs:
@@ -6,28 +6,41 @@
 // `hub-peer-range` in check-architecture asserts the peer is *a range*. It
 // cannot assert the range is *true*, because truth requires resolving symbols
 // out of a hub version that is not installed. Every other gate in this repo —
-// build, lint, typecheck, 1717 tests — runs against the DEV PIN, so all of them
+// build, lint, typecheck, 224 tests — runs against the DEV PIN, so all of them
 // stay green no matter how wrong the declared range is. The dev pin is a proxy
 // for the range, and it always answers reassuringly.
 //
-// That gap shipped twice:
+// ⚠️ THE TWO INCIDENTS BELOW ARE noy-db-to's, NOT THIS REPO'S. The ported header
+// told them as local history; they are about to-postgres / to-drive / to-icloud,
+// packages this repo does not contain. The MECHANISM is what transfers and it
+// transfers exactly — which is why these stay here, corrected rather than
+// deleted. Deleting them would throw away the reasoning along with the
+// misattribution, and the reasoning is the entire argument for compiling
+// instead of grepping.
 //
-//   #89  16 packages advertised ^0.3.0 || ^0.4.0 || ^0.5.0 while importing
-//        StoreLocator / StoreDescriptor / StoreFactory, which exist only from
-//        0.6.0-pre. `npm i @noy-db/to-postgres @noy-db/hub` satisfied the peer
-//        check and then failed to typecheck. The same defect was live on the
-//        0.5.0 stable line and had to be repaired by deprecating 17 versions.
+//   noy-db-to #89  16 packages advertised ^0.3.0 || ^0.4.0 || ^0.5.0 while
+//        importing StoreLocator / StoreDescriptor / StoreFactory, which exist
+//        only from 0.6.0-pre. `npm i @noy-db/to-postgres @noy-db/hub` satisfied
+//        the peer check and then failed to typecheck. That defect was live on
+//        noy-db-to's 0.5.0 stable line and was repaired by deprecating 17
+//        versions. ⚠️ That "17" is the origin of a number that then travelled:
+//        release.yml borrowed it and re-pointed it at on-*@0.5.0, where every
+//        clause was false. Fixing the copy while this source stood is how it
+//        would have come back on the next port.
 //
-//   #84  to-drive / to-icloud register a NoydbPodStore factory without a cast,
-//        which needs StoreLocator.register() to be generic over both store
-//        shapes — landed in 0.6.0-pre.11. SYMBOL PRESENCE DOES NOT CATCH THIS:
-//        StoreFactory exists at 0.6.0-pre.0, it just cannot accept the
-//        argument. Only compiling against the floor finds it.
+//   noy-db-to #84  to-drive / to-icloud register a NoydbPodStore factory
+//        without a cast, which needs StoreLocator.register() to be generic over
+//        both store shapes — landed in 0.6.0-pre.11. SYMBOL PRESENCE DOES NOT
+//        CATCH THIS: StoreFactory exists at 0.6.0-pre.0, it just cannot accept
+//        the argument. Only compiling against the floor finds it. This is the
+//        proxy table's "symbol presence vs does the signature accept the
+//        argument" row, and it is why this check exists at all.
 //
 // So this check COMPILES; it does not grep. That distinction is the whole
 // point and should not be optimised away.
 //
-// Cost: one `pnpm install` per DISTINCT floor (currently two), not per package.
+// Cost: one `pnpm install` per DISTINCT floor (currently ONE — all six
+// hub-binding packages declare ^0.7.0), not per package.
 // Intended for CI, not for the lint path — it needs the network.
 //
 // Usage:  node scripts/check-peer-floor.mjs
@@ -63,7 +76,7 @@ try {
 
 const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'))
 
-export function storeDirs() {
+export function packageDirs() {
   return readdirSync(ROOT)
     .filter((d) => d.startsWith('on-'))
     .map((d) => join(ROOT, d))
@@ -130,10 +143,18 @@ export function pinnedRootText(originalText, floor) {
 // ── Plan: group packages by the minimum hub version their range admits ──────
 export function planGroups() {
   const groups = new Map() // floor -> [{name, dir, range}]
-  for (const dir of storeDirs()) {
+  for (const dir of packageDirs()) {
     const pj = readJson(join(dir, 'package.json'))
     const range = pj.peerDependencies?.['@noy-db/hub']
-    if (!range) continue // check-architecture's hub-peer-range already fails this
+    // ⚠️ NOT "check-architecture already failed this" — that was true in
+    // noy-db-to, where every store binds /to. HERE three packages
+    // (on-email-otp, on-threat, on-totp) import hub NOWHERE, and
+    // check-architecture's rule deliberately exempts them (see its line 68).
+    // So a package with no hub peer is LEGITIMATE, not already-rejected, and
+    // this skip is correct for a different reason than the ported comment gave.
+    // Do not "fix" this into a hard failure: it would break three packages that
+    // owe no peer.
+    if (!range) continue
     const floor = floorOf(range)
     if (!floor) {
       console.error(`✗ ${pj.name}: no floor to check "${range}" against.`)
@@ -151,13 +172,15 @@ export function planGroups() {
 function main() {
 const groups = planGroups()
 
-// Report what was actually GROUPED, not how many stores exist. A package whose
-// peer range is absent or empty is skipped above (check-architecture fails it
-// by name, and exits 1), and printing the directory count would claim coverage
-// this run does not have.
+// Report what was actually GROUPED, not how many packages exist. A package with
+// no hub peer is skipped above — legitimately, because it imports hub nowhere —
+// and printing the directory count would claim coverage this run does not have.
+// The "(N skipped — no peer range)" suffix is load-bearing here: three of nine
+// are expected to be skipped forever, so a reader must be able to tell that
+// from a peer range that went missing by accident.
 const checked = [...groups.values()].reduce((n, pkgs) => n + pkgs.length, 0)
-const total = storeDirs().length
-const scope = checked === total ? `${total} stores` : `${checked} of ${total} stores (${total - checked} skipped — no peer range)`
+const total = packageDirs().length
+const scope = checked === total ? `${total} packages` : `${checked} of ${total} packages (${total - checked} skipped — no peer range)`
 console.log(`Peer-floor check — ${groups.size} distinct floor(s) across ${scope}\n`)
 for (const [floor, pkgs] of groups) {
   console.log(`  @noy-db/hub@${floor}`)
@@ -196,13 +219,13 @@ try {
       continue
     }
 
-    // Build the group AND its workspace dependencies first. Several stores
+    // Build the group AND its workspace dependencies first. Several packages
     // import a sibling (to-cloudflare-r2 → to-aws-s3, to-supabase →
     // to-postgres) and resolve it through the workspace link, whose `types`
     // field points into dist/. Without this the typecheck fails with TS2307
     // "Cannot find module" — which looks exactly like a peer-range failure and
     // is not one. The `...` suffix pulls in each package's workspace deps, so
-    // the build stays inside this group's floor rather than rebuilding stores
+    // the build stays inside this group's floor rather than rebuilding packages
     // that declare a different one.
     const buildFilters = pkgs.flatMap((p) => ['--filter', `${p.name}...`])
     try {
@@ -252,7 +275,7 @@ if (failures.length) {
   console.error('consumers hit it as a broken install, not as a refused one.')
   process.exit(1)
 }
-console.log('✓ every store compiles against the oldest @noy-db/hub its peer range admits')
+console.log('✓ every package compiles against the oldest @noy-db/hub its peer range admits')
 }
 
 if (isMain) main()
