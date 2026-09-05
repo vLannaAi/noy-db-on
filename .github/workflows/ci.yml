@@ -76,6 +76,19 @@ jobs:
       # obligation did too. Nothing compiles a migration map.
       - name: Codemod rows agree with this repo's source
         run: pnpm check:codemod-rows
+      # RUNS the payload builder rather than linting it. The release job is the
+      # only other place this script executes, and by then a failure costs a
+      # release that publishes without its asset — which, once the `on`
+      # partition is seeded, stops noy-db-docs' walk for every partition in the
+      # run. Building the payload here makes that a PR failure instead.
+      #
+      # ⚠️ This is not ceremony: the first version of this script did not parse
+      # at all. A `on-*` glob written with a trailing slash inside a block
+      # comment closes the comment, and the file died with a SyntaxError that
+      # every reading of the diff had missed. `assertValid` runs inside the
+      # builder, so this step also catches a bad changeType or a version skew.
+      - name: Docs bridge payload builds and validates
+        run: node scripts/docs-bridge/build-payload.mjs > /dev/null
       - name: Lint
         run: pnpm lint
       - name: Typecheck

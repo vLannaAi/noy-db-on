@@ -1,6 +1,6 @@
 # Changelog
 
-All nine `@noy-db/on-*` packages share one version line and are released together.
+All ten `@noy-db/on-*` packages share one version line and are released together.
 
 This file is **hand-written**. There is no changeset tooling here, deliberately: this repo has
 zero internal dependency edges, so there is no dependency closure to compute, and changesets'
@@ -11,6 +11,53 @@ repo does not have. See `scripts/version-set.mjs` for the mechanism that replace
 `["dist", "README.md", "LICENSE"]`, verified — so unlike `@noy-db/hub`, whose changelog *is* in
 its tarball and therefore immutable once published, a mistake here can simply be corrected in
 place. Do not apply hub's correct-alongside-in-the-next-entry constraint to this file.
+
+## 0.7.1-pre.0
+
+⭐ **This section is not housekeeping — it is the release payload's only prose.** Under the
+doc-sync source contract this repo emits a top-level `changelog` read from the `## <version>`
+section here, because it has no per-package `CHANGELOG.md` and a release-scoped narrative cannot
+be split across ten packages truthfully. An unwritten section means a payload with no prose at
+all, so this is written *before* the cut, never with it.
+
+### Added
+
+- **`@noy-db/on-shamir` moves here from `noy-db`** (ruling lanna-db#10). `shamirRecoveryProvider()`,
+  `splitKEK`, `combineKEK` and the `on-*` framing land in this repo; the GF(2^8) math and the share
+  codecs became `@noy-db/shamir`, a zero-dependency primitive with no hub contract, published from
+  core. This package takes a plain caret dependency on it and re-exports its whole surface, so
+  `on-shamir@0.7.0`'s published surface is unchanged — code naming `splitSecret` or
+  `encodeShareBase32` keeps compiling.
+  - ⭐ **The structural mirror of hub's `NoydbShamir` is deleted, not copied.** It existed because
+    hub devDepended on this package for six recovery tests, making a peer edge a turbo build cycle.
+    Hub's tests now build a four-line adapter over `@noy-db/shamir` and import this package nowhere,
+    so the cycle is gone. `NoydbShamir` is imported as a type from `@noy-db/hub/on`; hub is its sole
+    declaration.
+  - ⚠️ Its npm name is **not new** — core published it from `0.1.0-pre.3` through `0.7.0`. Only the
+    publisher changed, which is why the release payload reports it as `version-only` rather than
+    `added`.
+
+### Changed
+
+- The six hub-binding packages, and now `on-shamir`, widen their `@noy-db/hub` peer from `^0.7.0`
+  to `^0.7.0 || ^0.7.1-pre.0` — appended, never replaced. `^0.7.0` admits no prerelease of any
+  version, so without this the seven cannot resolve against the `0.7.1` pre line at all.
+
+### Fixed
+
+- **CI never ran on stacked PRs** (lanna-db#12). `pull_request: branches: [main]` filters the *base*
+  branch, so a PR stacked on another branch matched nothing and no workflow ran — GitHub then
+  reports "no checks reported", which renders as pending rather than as an error.
+- **Three ported-text defects in `check-architecture.mjs`** (lanna-db#13), all inherited from the
+  noy-db-to port and all invisible to a green run, because a gate's failure message is code that
+  executes only on failure. The `no-runtime-store-import` message printed a literal `\n  // ` into
+  its own text; the `Rule 2` header asserted the `to-only` rule that the note beneath it exists to
+  deny; and `no-crypto-deps` explained itself with the wrong threat model ("stores see ciphertext
+  only" — an `on-*` package is not a store and legitimately handles key material; it may not take a
+  crypto dependency because `@noy-db/hub` owns the primitives). Both wrong reasons are kept and
+  marked false rather than deleted.
+- Both workflow headers called these packages "storage adapters", inverting the family's prefix
+  grammar in the two files a newcomer opens first.
 
 ## Unreleased
 
