@@ -1,14 +1,14 @@
 {
-  "name": "@noy-db/on-webauthn",
+  "name": "@noy-db/on-shamir",
   "version": "0.7.1-pre.0",
-  "description": "WebAuthn hardware-key keyrings for noy-db — Touch ID, Face ID, Windows Hello, YubiKey, FIDO2 passkeys",
+  "description": "k-of-n Shamir Secret Sharing of the vault KEK for multi-party unlock. Any K of N shares recombines the key; fewer than K leaks zero bits. Composable — each share can be protected by any other on-* method. Math and share codecs live in @noy-db/shamir and are re-exported here.",
   "license": "MIT",
   "author": "vLannaAi <vicio@lanna.ai>",
-  "homepage": "https://github.com/vLannaAi/noy-db/tree/main/packages/on-webauthn#readme",
+  "homepage": "https://github.com/vLannaAi/noy-db-on/tree/main/on-shamir#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/vLannaAi/noy-db-on.git",
-    "directory": "on-webauthn"
+    "directory": "on-shamir"
   },
   "bugs": {
     "url": "https://github.com/vLannaAi/noy-db/issues"
@@ -37,28 +37,25 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@noy-db/shamir": "^0.7.1-pre.0"
+  },
   "peerDependencies": {
     "@noy-db/hub": "^0.7.0"
   },
   "devDependencies": {
-    "@noy-db/hub": "0.7.0",
-    "@noy-db/test-ceremony-conformance": "0.7.0",
-    "happy-dom": "^18.0.0"
+    "@noy-db/hub": "0.7.0"
   },
   "keywords": [
     "noy-db",
     "auth",
-    "webauthn",
-    "passkey",
-    "biometric",
-    "fido2",
-    "yubikey",
-    "touch-id",
-    "face-id",
-    "windows-hello",
-    "hardware-key",
-    "zero-knowledge",
-    "encryption"
+    "on-shamir",
+    "shamir",
+    "secret-sharing",
+    "k-of-n",
+    "threshold",
+    "multi-party",
+    "zero-knowledge"
   ],
   "publishConfig": {
     "access": "public",

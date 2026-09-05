@@ -8,10 +8,13 @@
     "check:architecture": "node scripts/check-architecture.mjs",
     "check:codemod-rows": "node scripts/check-codemod-rows.mjs",
     "check:declared-deps": "node scripts/check-declared-deps.mjs",
+    "check:not-already-published": "node scripts/check-not-already-published.mjs",
     "check:peer-floor": "node scripts/check-peer-floor.mjs",
+    "check:versions-uniform": "node scripts/check-versions-uniform.mjs",
     "lint": "pnpm -r lint",
     "test": "vitest run",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "version:set": "node scripts/version-set.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

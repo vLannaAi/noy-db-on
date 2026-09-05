@@ -22,11 +22,15 @@
  * but do NOT copy two of its choices, both deliberate there and wrong here:
  *
  *   1. It carries a HARDCODED package list (`PRE_ONLY`), currently empty, so it
- *      is a no-op until someone remembers to add a name. This repo has the scar
- *      that argues against that: the docs-bridge WIRING table was a hardcoded
- *      list, `to-browser-fs` debuted as the 18th store and was never added, and
- *      the bridge threw on TWO releases while both runs reported success. We
- *      DERIVE the list from the filesystem instead.
+ *      is a no-op until someone remembers to add a name. ⚠️ The scar that argues
+ *      against it is noy-db-to's, not this repo's — the ported text told it as
+ *      local history. There, the docs-bridge WIRING table was a hardcoded list,
+ *      `to-browser-fs` debuted as the 18th store and was never added, and the
+ *      bridge threw on TWO releases while both runs reported success. The
+ *      lesson transfers even though the incident is not ours, and this repo has
+ *      its own instance of the same class: release.yml shipped a docs-bridge
+ *      job whose payload script was never extracted, so it could only ever fail
+ *      inside a green run. We DERIVE the list from the filesystem instead.
  *
  *   2. It never fails its caller, on the reasoning that a wedged tag is
  *      cosmetic and a red release trains people to stop reading logs. That is

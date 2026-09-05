@@ -69,13 +69,17 @@ function checkHubPeerRange() {
     if (peer === undefined)
       fail('hub-peer-range', `${pj.name} imports @noy-db/hub but declares no peerDependencies['@noy-db/hub'].`, dir)
     else if (peer.startsWith('workspace:'))
-      fail('hub-peer-range', `${pj.name} peers @noy-db/hub as "${peer}"; cross-repo stores must use a published range (e.g. "^0.2.0-pre.31").`, dir)
+      fail('hub-peer-range', `${pj.name} peers @noy-db/hub as "${peer}"; a cross-repo package must use a published range (e.g. "^0.7.0").`, dir)
     else if (!/^[\^~]?\d/.test(peer))
       fail('hub-peer-range', `${pj.name} peers @noy-db/hub as "${peer}"; expected a semver range.`, dir)
   }
 }
 
-// Rule 2 — to-only: store src may import @noy-db/hub ONLY via /to.
+// Rule 2 — no-runtime-store-import: on-* src may not VALUE-import @noy-db/hub/to.
+// ⚠️ This header read "to-only: store src may import @noy-db/hub ONLY via /to" —
+// noy-db-to's rule, and FALSE HERE: it asserted exactly what the note inside the
+// function exists to deny. Kept and marked false rather than deleted, because the
+// MECHANISM transferred from noy-db-to and only the ownership did not.
 // Covers static imports (from/import), dynamic import(), require(), and bare
 // side-effect imports (import '@noy-db/hub').
 const HUB_IMPORT_RE = /(?:from|import|require)\s*\(?\s*['"]@noy-db\/hub(\/[^'"]*)?['"]/g
@@ -87,7 +91,8 @@ function checkNoRuntimeStoreImport() {
   // `on-*` package binds its own port and legitimately reads shared types
   // from the root.
   //
-  // What IS invariant: an unlock primitive proves who you are and yields key\n  // material — it never touches the store. So a VALUE import of the store
+  // What IS invariant: an unlock primitive proves who you are and yields key
+  // material — it never touches the store. So a VALUE import of the store
   // contract is a layer violation, while a TYPE-only import is not — the types
   // erase at build and move no data.
   //
@@ -109,7 +114,8 @@ function checkNoRuntimeStoreImport() {
         const isTypeOnly = kw !== -1 && /^import\s+type\b/.test(code.slice(kw, at))
         if (!isTypeOnly)
           fail('no-runtime-store-import',
-            `${pj.name}: value-imports '@noy-db/hub/to' — an unlock primitive proves who you are and yields key\n  // material — it never touches the store. ` +
+            `${pj.name}: value-imports '@noy-db/hub/to' — an unlock primitive proves who you are ` +
+            `and yields key material; it never touches the store. ` +
             `Use \`import type\` if you only need the contract's types.`, file)
         at = code.indexOf(SPEC, at + 1)
       }
@@ -117,7 +123,14 @@ function checkNoRuntimeStoreImport() {
   }
 }
 
-// Rule 3 — no-crypto-deps: zero npm crypto packages (stores see ciphertext only).
+// Rule 3 — no-crypto-deps: zero npm crypto packages.
+// ⚠️ The ported reason was "stores see ciphertext only". FALSE HERE, and kept marked
+// false because the mechanism is right and only the justification travelled wrong: an
+// on-* package is not a store and legitimately handles KEY MATERIAL. It may not take a
+// crypto dependency because @noy-db/hub OWNS the primitives — one audited implementation,
+// not one per unlock method. The true sentence differs per repo (as-* sees plaintext by
+// design; at-* is the non-zero-knowledge family), so this is not a family-wide edit —
+// lanna-db#13.
 const BANNED = new Set(['crypto-js', 'node-forge', 'tweetnacl', 'bcryptjs', 'bcrypt'])
 function checkNoCryptoDeps() {
   for (const dir of listStoreDirs()) {
@@ -125,7 +138,7 @@ function checkNoCryptoDeps() {
     for (const block of ['dependencies', 'devDependencies', 'peerDependencies']) {
       for (const name of Object.keys(pj[block] ?? {})) {
         if (BANNED.has(name) || name.startsWith('@noble/') || name.startsWith('@scure/'))
-          fail('no-crypto-deps', `${pj.name} depends on crypto package "${name}"; stores see ciphertext only — use @noy-db/hub.`, dir)
+          fail('no-crypto-deps', `${pj.name} depends on crypto package "${name}"; @noy-db/hub owns the crypto primitives — import them from hub.`, dir)
       }
     }
   }
