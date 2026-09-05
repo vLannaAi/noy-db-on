@@ -87,6 +87,16 @@ importers:
         specifier: ^18.0.0
         version: 18.0.1
 
+  on-shamir:
+    dependencies:
+      '@noy-db/shamir':
+        specifier: ^0.7.1-pre.0
+        version: 0.7.1-pre.0
+    devDependencies:
+      '@noy-db/hub':
+        specifier: 0.7.0
+        version: 0.7.0
+
   on-threat:
     devDependencies:
       '@types/node':
@@ -517,6 +527,10 @@ packages:
         optional: true
       zod-to-json-schema:
         optional: true
+
+  '@noy-db/shamir@0.7.1-pre.0':
+    resolution: {integrity: sha512-CoEvUYPxz2I6AHxi9eKqmDgfkNsN5xTH2Ld4xu6GbRvuaoQS1N79+R3VD6E35R/nzEzmgfSQ6FSUV0wnGJp33g==}
+    engines: {node: '>=22.0.0'}
 
   '@noy-db/test-ceremony-conformance@0.7.0':
     resolution: {integrity: sha512-NlbxdfPzmsJHyjAbtNZjv5BxQuplYWOy0iKq0EAaJbARm5DsBKhf93nzrH+sI+8woYPB2G5yNxYFeJPpE+4Tag==}
@@ -1666,6 +1680,8 @@ snapshots:
   '@noy-db/hub@0.7.0':
     dependencies:
       '@noy-db/attestation': 0.7.0
+
+  '@noy-db/shamir@0.7.1-pre.0': {}
 
   '@noy-db/test-ceremony-conformance@0.7.0(@noy-db/hub@0.7.0)(vitest@3.2.7(@types/node@22.20.1)(happy-dom@18.0.1))':
     dependencies:
