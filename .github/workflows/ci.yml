@@ -1,6 +1,8 @@
 name: CI
 
-# Standard CI for noy-db-on: the non-essential @noy-db/on-* storage adapters.
+# Standard CI for noy-db-on: the @noy-db/on-* unlock and auth primitives — an `on-`
+# package is a way to GET ON (prove who you are, yield key material), never a place
+# data goes; `to-` is the storage prefix and lives in noy-db / noy-db-to.
 # Multi-package pnpm workspace: check:architecture → install → build → lint → typecheck → test
 # across the runtime-supported Node versions (22 + 24).
 

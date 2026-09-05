@@ -1,6 +1,6 @@
 name: Release to npm
 
-# Strict release pipeline for the noy-db-on storage adapters.
+# Strict release pipeline for the @noy-db/on-* unlock and auth primitives.
 #
 # Triggered on GitHub Release `published`. Runs the full verification
 # gate (install + build + lint + typecheck + test) on a clean checkout
