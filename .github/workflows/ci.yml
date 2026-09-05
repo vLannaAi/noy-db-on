@@ -7,8 +7,13 @@ name: CI
 on:
   push:
     branches: [main]
+  # ⚠️ NO `branches:` filter here, deliberately. For `pull_request` that key
+  # filters on the BASE branch, so `branches: [main]` silently skips every PR
+  # stacked on another branch — and GitHub then reports "no checks reported",
+  # which renders as pending and is indistinguishable from never-ran.
+  # noy-db-docs shipped a stacked PR whose green came from a hand dispatch.
+  # `push` stays pinned to main so this does not double-run per branch.
   pull_request:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
