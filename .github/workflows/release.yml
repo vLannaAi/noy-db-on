@@ -365,11 +365,13 @@ jobs:
   # Pointing `next` at the stable too is self-correcting: the next pre-release
   # moves it forward and the normal invariant returns.
   #
-  # NOT continue-on-error, deliberately, and unlike the docs bridge. That job is
-  # non-fatal because a missing payload is recoverable and must not fail a
-  # publish that already succeeded. This one is different: a package left behind
-  # makes `npm i @noy-db/on-x@next` resolve something OLDER than `@latest` — a
-  # wrong answer, not a missing nicety. It must be loud.
+  # NOT continue-on-error, deliberately — and no longer "unlike the docs
+  # bridge", which this comment used to contrast itself against. That job was
+  # non-fatal while a missing payload cost only this repo's docs; under the
+  # hard-stop rule it stops every partition's sync, so it is fatal too now.
+  # Both jobs are loud for the same reason: each turns a completed publish into
+  # a WRONG ANSWER somewhere else — here `npm i @noy-db/on-x@next` resolving
+  # something OLDER than `@latest`, there a docs run that cannot proceed at all.
   #
   # Only fires when the publish actually routed to `latest`.
   align-dist-tags:
@@ -432,12 +434,19 @@ jobs:
   # That is why this job landed BEFORE the first 0.7.1-pre cut rather than with
   # it. If this job is ever disabled, stop cutting releases first.
   #
-  # `continue-on-error` at JOB level, deliberately: by the time this runs the
-  # publish has already succeeded, and a docs-side failure must not turn a
-  # completed publish red. The cost is that "non-fatal" and "invisible" are the
-  # same setting — which has silently eaten releases elsewhere in this family
-  # (noy-db-to#93: two releases green while this job was red) — so the
-  # `if: failure()` step writes a loud summary line. Non-fatal, never silent.
+  # ⛔ NOT `continue-on-error`, and the inherited reasoning for making it so is
+  # OBSOLETE rather than wrong-at-the-time. noy-db set that flag when a missing
+  # payload cost only that repo's own docs — recoverable, and no reason to turn
+  # a completed publish red. The hard-stop rule changed the blast radius: a tag
+  # in range with no asset now stops `pnpm sync` for EVERY partition in the run,
+  # so this is not a missing nicety, it is an outage other repos pay for.
+  #
+  # The cost of the old setting is measured, not theoretical: "non-fatal" and
+  # "invisible" are the same setting, and noy-db-to#93 lost TWO releases to it —
+  # both runs green while this job was red. The `if: failure()` summary step
+  # below stays, so the failure is now both loud AND red, and its text says in
+  # its first line that the publish itself succeeded — which is the thing a red
+  # run might otherwise mislead someone into re-running.
   #
   # ⭐ No DOCS_SYNC_TOKEN. The asset is uploaded to THIS repo's own release with
   # the built-in GITHUB_TOKEN, so the cross-repo PAT that `notify-docs` needed —
@@ -448,7 +457,6 @@ jobs:
     needs: publish
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: write   # gh release upload
     steps:
