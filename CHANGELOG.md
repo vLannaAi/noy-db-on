@@ -45,6 +45,17 @@ all, so this is written *before* the cut, never with it.
 
 ### Fixed
 
+- **A removed password slot still unlocked** (#6, transferred from noy-db#1427).
+  `verifyPasswordSlot` authenticated the slot blob it was handed and never asserted the slot was
+  still in the keyring it read three lines later, so a captured blob kept returning a full live DEK
+  set after removal. It now refuses an unenrolled slot. ⚠️ **That is hardening, not revocation, and
+  the issue stays open for the real fix:** `unwrapDeksWithPassword` is exported, so a blob holder
+  reaches the DEKs one call earlier without touching the assertion, and removal rotates nothing, so
+  keys already unwrapped stay valid forever. Rotate-on-removal lives in `@noy-db/hub` and is not
+  this repo's to land. The TSDoc now states the bearer-credential property plainly.
+  ⭐ Two existing tests only passed because the check was absent — they verified a slot no keyring
+  had ever heard of. Both now enrol the slot first; the `#1096` roster-forgery row in particular was
+  measuring less than its name claimed.
 - **CI never ran on stacked PRs** (lanna-db#12). `pull_request: branches: [main]` filters the *base*
   branch, so a PR stacked on another branch matched nothing and no workflow ran — GitHub then
   reports "no checks reported", which renders as pending rather than as an error.

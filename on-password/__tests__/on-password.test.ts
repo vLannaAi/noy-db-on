@@ -20,7 +20,7 @@ import {
   PasswordInvalidError,
 } from '../src/index.js'
 import type { UnlockedKeyring, KeyringAuthenticator, NoydbStore, EncryptedEnvelope, KeyringFile, SlotRewrapContext } from '@noy-db/hub'
-import { ValidationError, createNoydb, withTeam } from '@noy-db/hub'
+import { ValidationError, createNoydb, withTeam, enrollAuthenticator, removeAuthenticator, findAuthenticator } from '@noy-db/hub'
 
 const subtle = globalThis.crypto.subtle
 
@@ -191,9 +191,13 @@ describe('@noy-db/on-password — wrap-DEKs enroll + verify (#26 Path C)', () =>
     const keyring = await db.team.getKeyring('acme')
 
     const opts = await enrollPasswordAuthenticator(keyring, { password: 'strong-password-2026' })
+    // #6 — the slot must actually be IN the keyring. Before the membership
+    // assertion this test passed without ever persisting it, which is the
+    // hole itself: it exercised a slot no keyring had ever heard of.
+    const enrolled = await enrollAuthenticator(store, 'acme', keyring, opts)
 
     const unlocked = await verifyPasswordSlot(
-      slotFromOptions(opts),
+      findAuthenticator(enrolled, opts.id)!,
       'strong-password-2026',
       { store, vault: 'acme', userId: 'alice' },
     )
@@ -221,6 +225,10 @@ describe('@noy-db/on-password — wrap-DEKs enroll + verify (#26 Path C)', () =>
     await bobDb.openVault('acme')
     const bobKeyring = await bobDb.team.getKeyring('acme')
     const opts = await enrollPasswordAuthenticator(bobKeyring, { password: 'strong-password-2026' })
+    // Persist the slot (see #6 note above) so the forgery below is what this
+    // row actually measures, not an unenrolled slot short-circuiting earlier.
+    const enrolled = await enrollAuthenticator(store, 'acme', bobKeyring, opts)
+    const slot = findAuthenticator(enrolled, opts.id)!
     bobDb.close()
 
     // The store edits one word. No key, no prior file.
@@ -231,13 +239,35 @@ describe('@noy-db/on-password — wrap-DEKs enroll + verify (#26 Path C)', () =>
     })
 
     await expect(
-      verifyPasswordSlot(slotFromOptions(opts), 'strong-password-2026', {
+      verifyPasswordSlot(slot, 'strong-password-2026', {
         store, vault: 'acme', userId: 'bob',
       }),
     ).rejects.toMatchObject({
       name: 'KeyringTamperedError',
       details: { userId: 'bob', reason: 'roster-tag-mismatch' },
     })
+  }, 30_000)
+
+  it('#6: a slot removed from the keyring no longer unlocks', async () => {
+    // Removal must take effect for a caller that hands the primitive a slot
+    // blob it captured earlier. Without the membership assertion the blob
+    // authenticates itself and the removal is a UI-level hide.
+    const store = inlineMemory()
+    const db = await createNoydb({ teamStrategy: withTeam(), store, user: 'alice', secret: 'owner-pass-1' })
+    await db.openVault('acme')
+    const keyring = await db.team.getKeyring('acme')
+
+    const opts = await enrollPasswordAuthenticator(keyring, { password: 'strong-password-2026' })
+    const enrolled = await enrollAuthenticator(store, 'acme', keyring, opts)
+    const captured = findAuthenticator(enrolled, opts.id)!
+    await removeAuthenticator(store, 'acme', enrolled, opts.id)
+
+    await expect(
+      verifyPasswordSlot(captured, 'strong-password-2026', {
+        store, vault: 'acme', userId: 'alice',
+      }),
+    ).rejects.toBeInstanceOf(PasswordInvalidError)
+    db.close()
   }, 30_000)
 
   it('verifyPasswordSlot throws when the keyring file is missing', async () => {

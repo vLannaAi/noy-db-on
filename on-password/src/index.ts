@@ -166,6 +166,15 @@ export async function enrollPasswordAuthenticator(
  * @throws {@link PasswordInvalidError} when the password is wrong or
  *   the slot is not a wrap-DEKs slot (e.g. a legacy wrap-KEK password
  *   legacy wrap-KEK slots — those need re-enrollment).
+ *
+ * ⛔ **A slot blob is a BEARER CREDENTIAL.** This function needs no store,
+ * no keyring and no network — the blob authenticates itself under the
+ * password. **Removing the slot from the keyring does not invalidate a
+ * copy of the blob**, because removal rotates no DEKs. Anyone holding a
+ * captured blob and the password keeps the full live DEK set until the
+ * vault's keys are rotated. Treat slot removal as *hiding the slot from
+ * future lookups*, not as revocation, and rotate if a blob may have
+ * leaked. See vLannaAi/noy-db-on#6.
  */
 export async function unwrapDeksWithPassword(
   slot: KeyringAuthenticator,
@@ -231,8 +240,14 @@ export async function unwrapDeksWithPassword(
  * those fields are not encrypted because the sync engine + grant flow
  * need them without a key.
  *
- * @throws {@link PasswordInvalidError} when the password is wrong or
- *   the keyring file is missing.
+ * Refuses a slot that is no longer enrolled in the keyring it loads —
+ * but see the revocation caveat on {@link unwrapDeksWithPassword}: that
+ * refusal is hardening, not revocation, and a holder of the raw blob
+ * bypasses it by calling the primitive directly. Rotation is the only
+ * thing that revokes.
+ *
+ * @throws {@link PasswordInvalidError} when the password is wrong, the
+ *   keyring file is missing, or the slot is not enrolled in it.
  */
 export async function verifyPasswordSlot(
   slot: KeyringAuthenticator,
@@ -250,6 +265,30 @@ export async function verifyPasswordSlot(
   }
   const file = JSON.parse(env._data) as KeyringFile
   const salt = new Uint8Array(base64ToBuffer(file.salt))
+
+  // #6 — refuse a slot that is no longer in the keyring. Hub's own tier-2
+  // dispatch reaches the verifier through `findAuthenticator`, so it never
+  // presents a removed slot; this guards the DIRECT-primitive path, where a
+  // caller hands us a blob it captured earlier.
+  //
+  // ⛔ THIS IS NOT REVOCATION, and must not be read as closing #6. Two
+  // measured reasons, both of which survive this check:
+  //   1. `unwrapDeksWithPassword` above is EXPORTED. A holder of the blob
+  //      calls it directly, gets the live DEK set, and never reaches this
+  //      line. The assertion is not on that path and cannot be.
+  //   2. Removal rotates nothing, so every DEK the blob unwrapped stays
+  //      valid forever. Declining to hand back a keyring object does not
+  //      un-extract keys that are already in the caller's hands.
+  // Real revocation is rotate-on-removal, which lives in hub
+  // (`removeAuthenticator`), not here. Do not "complete" this by hardening
+  // the message or widening the check — neither moves the guarantee.
+  const stillEnrolled = (file.authenticators ?? []).some((a) => a.id === slot.id)
+  if (!stillEnrolled) {
+    throw new PasswordInvalidError(
+      `verifyPasswordSlot: slot "${slot.id}" is not enrolled in ` +
+        `"${options.vault}/_keyring/${options.userId}". It may have been removed.`,
+    )
+  }
 
   // #1096 — the identity fields below are read from the PLAINTEXT header, so
   // without this the store could promote a viewer to admin by editing one word
