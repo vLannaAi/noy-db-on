@@ -45,6 +45,15 @@ all, so this is written *before* the cut, never with it.
 
 ### Fixed
 
+- **Two slot-rewrap TSDoc blocks said `rotateSecret` staled the old DEKs.** It does not: it rewraps
+  the SAME DEK values under a freshly-derived KEK, and only `rotateKeys` re-mints values (verified
+  against hub's own `rotateSecret` / `RotateKeysOptions` docs). Records are encrypted with DEKs, so
+  the sentence read as though a phrase rotation invalidated a captured `wrapped_deks` /
+  `wrappedPayload` blob — the opposite of true, and directly misleading next to #6, where the
+  captured blob is the whole problem. Corrected in `passwordSlotRewrapCeremony` and
+  `webAuthnSlotRewrapCeremony`, with the wrong sentence quoted and marked rather than deleted.
+  `unlockWebAuthn`'s "stale DEKs" note now names `rotateKeys` explicitly — the same word doing two
+  jobs is what produced the error eighty lines below it.
 - **A removed password slot still unlocked** (#6, transferred from noy-db#1427).
   `verifyPasswordSlot` authenticated the slot blob it was handed and never asserted the slot was
   still in the keyring it read three lines later, so a captured blob kept returning a full live DEK
