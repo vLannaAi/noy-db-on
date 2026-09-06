@@ -435,11 +435,22 @@ jobs:
   # it. If this job is ever disabled, stop cutting releases first.
   #
   # ⛔ NOT `continue-on-error`, and the inherited reasoning for making it so is
-  # OBSOLETE rather than wrong-at-the-time. noy-db set that flag when a missing
-  # payload cost only that repo's own docs — recoverable, and no reason to turn
-  # a completed publish red. The hard-stop rule changed the blast radius: a tag
-  # in range with no asset now stops `pnpm sync` for EVERY partition in the run,
-  # so this is not a missing nicety, it is an outage other repos pay for.
+  # OBSOLETE rather than wrong-at-the-time. noy-db-to WROTE and scoped that flag
+  # (its 0cbabe2, 2026-07-30 20:31 +0700); noy-db adopted it ~15h later
+  # (4fa4f168, 2026-07-31 11:10 +0700) and THIS repo inherited it from noy-db at
+  # extraction. Measured by `git log -S` in both clones, not relayed — an
+  # earlier revision of this comment credited noy-db with authoring it.
+  #
+  # It was right there and REMAINS right there: a missing payload costs only
+  # that repo's own docs, so a docs outage must never turn a completed publish
+  # red. noy-db-to still sets it, and answered its own #93 with an
+  # `if: failure()` reporter rather than by flipping it. Do NOT cite this repo
+  # as precedent for flipping it in theirs.
+  #
+  # The hard-stop rule changed the blast radius HERE: a tag in range with no
+  # asset now stops `pnpm sync` for EVERY partition in the run, so this is not a
+  # missing nicety, it is an outage other repos pay for. Different setting, same
+  # reasoning applied to a different cost.
   #
   # The cost of the old setting is measured, not theoretical: "non-fatal" and
   # "invisible" are the same setting, and noy-db-to#93 lost TWO releases to it —
