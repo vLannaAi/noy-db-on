@@ -355,10 +355,18 @@ export interface VerifyPasswordSlotOptions {
  *
  * The password itself is unaffected by phrase rotation — what needs to
  * change is the **wrapped DEK set**: the encrypted blob the slot's
- * `wrapped_deks` field holds. After rotation, the old blob still has
- * the old DEKs (now stale because rotateSecret rewrapped them
- * under a fresh KEK); the new blob must hold the freshly rewrapped
- * `ctx.newDeks`.
+ * `wrapped_deks` field holds. After rotation the old blob is wrapped
+ * under the OLD KEK; the new blob must hold `ctx.newDeks`.
+ *
+ * ⚠️ **The old blob's DEK VALUES are not stale — only its wrapping is.**
+ * `rotateSecret` rewraps the SAME DEKs under a freshly-derived KEK;
+ * only `rotateKeys` re-mints DEK values. Records are encrypted with
+ * DEKs, so a captured blob keeps decrypting everything across any
+ * number of phrase rotations — see the bearer-credential warning on
+ * {@link unwrapDeksWithPassword} and #6. An earlier revision of this
+ * comment said "now stale because rotateSecret rewrapped them under a
+ * fresh KEK", which reads as though rotation invalidated the captured
+ * blob. It does not.
  *
  * Single ceremony, one operation:
  *   1. Validate `oldSlot.method === 'password'` and `oldSlot.wrapKind === 'deks'`.

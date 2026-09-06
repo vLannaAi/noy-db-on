@@ -540,9 +540,11 @@ export async function enrollWebAuthn(
  * Triggers the WebAuthn assertion prompt. On success, decrypts the keyring
  * payload from the enrollment record and returns an `UnlockedKeyring`.
  *
- * The returned keyring has the same DEKs as at enrollment time. If DEKs
- * have been rotated since enrollment, this will return stale DEKs — the
- * caller should detect decryption failures and prompt for re-enrollment.
+ * The returned keyring has the same DEKs as at enrollment time. If DEK
+ * VALUES have been re-minted since enrollment — `rotateKeys`, not
+ * `rotateSecret` — this returns stale DEKs and the caller should detect
+ * decryption failures and prompt for re-enrollment. A `rotateSecret`
+ * phrase rotation does NOT stale them: it rewraps the same values.
  *
  * Non-PRF unlock (`enrollment.prfUsed === false`) is a presence gate, not
  * zero-knowledge confidentiality — it is kept working here for back-compat
@@ -623,10 +625,19 @@ export async function unlockWebAuthn(
  * wrapping key derived from PRF (or rawId fallback) is bound to the
  * authenticator, not to the secret. What needs to change is the
  * **wrapped payload**: the encrypted blob the slot's `wrapped_kek`
- * field holds. After rotation, the old payload still has the old
- * DEKs (now stale because rotateSecret rewrapped them under a
- * fresh KEK); the new payload must hold the freshly rewrapped
- * `ctx.newDeks`.
+ * field holds. After rotation the old payload is wrapped under the
+ * OLD KEK, so hub can no longer thread it through the rotated
+ * keyring; the new payload must hold `ctx.newDeks`.
+ *
+ * ⚠️ **The old payload's DEK VALUES are not stale — only its wrapping
+ * is.** `rotateSecret` rewraps the SAME DEKs under a freshly-derived
+ * KEK; only `rotateKeys` re-mints DEK values. Records are encrypted
+ * with DEKs, so a captured `wrappedPayload` keeps decrypting
+ * everything across any number of phrase rotations. An earlier
+ * revision of this comment said "now stale because rotateSecret
+ * rewrapped them under a fresh KEK", which reads as though rotation
+ * invalidated the captured blob. It does not, and nothing in this
+ * ceremony is a revocation step.
  *
  * Single ceremony, two operations:
  *   1. Trigger one WebAuthn assertion to derive the wrapping key.
