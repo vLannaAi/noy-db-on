@@ -368,6 +368,29 @@ export interface VerifyPasswordSlotOptions {
  * fresh KEK", which reads as though rotation invalidated the captured
  * blob. It does not.
  *
+ * ## Revoking a credential — this ceremony is a REQUIRED INPUT to it
+ *
+ * Hub's `revokeAuthenticator` is the real revocation, and it is three steps:
+ * `removeAuthenticator` (hides the slot), `rotateKeys` (mints fresh DEKs —
+ * the step that actually revokes), then `rotateSecret` with a
+ * `slotCeremonies` entry for every slot that STAYS.
+ *
+ * ⛔ **A remaining slot handed no ceremony is DROPPED, not preserved.** After
+ * the `rotateKeys` step its blob wraps DEKs that no longer exist, so keeping
+ * it would leave a credential that silently fails. Its holder must re-enrol.
+ *
+ * So revoking ONE credential means supplying `passwordSlotRewrapCeremony(password)` for
+ * EVERY password slot you intend to keep — and each requires that
+ * credential to be present (the password itself for a password slot, a live authenticator assertion for a WebAuthn slot). Re-wrapping a credential
+ * is the credential's own operation; there is no way to do it on the
+ * holder's behalf.
+ *
+ * ⚠️ **Not in any published hub at the time of writing.**
+ * `revokeAuthenticator` landed on noy-db `main` in `0612b4ac`, AFTER
+ * `@noy-db/hub@0.7.1-pre.0` was cut and published — so it is in neither
+ * `@latest` (0.7.0) nor `@next` (0.7.1-pre.0). Ask npm before promising it to
+ * a consumer; do not infer its version from hub's `main`.
+ *
  * Single ceremony, one operation:
  *   1. Validate `oldSlot.method === 'password'` and `oldSlot.wrapKind === 'deks'`.
  *   2. Re-mint the wrap-DEKs blob via {@link enrollPasswordAuthenticator}

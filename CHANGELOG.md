@@ -43,6 +43,17 @@ all, so this is written *before* the cut, never with it.
   to `^0.7.0 || ^0.7.1-pre.0` — appended, never replaced. `^0.7.0` admits no prerelease of any
   version, so without this the seven cannot resolve against the `0.7.1` pre line at all.
 
+### Added
+
+- **The rewrap ceremonies now document their role in revocation** (#6, noy-db#1445/#1446).
+  `passwordSlotRewrapCeremony` and `webAuthnSlotRewrapCeremony` are required INPUTS to hub's
+  `revokeAuthenticator` — `removeAuthenticator`, then `rotateKeys` (the step that revokes), then
+  `rotateSecret` with a ceremony per REMAINING slot. A remaining slot handed no ceremony is
+  **dropped**, and its holder must re-enrol, so revoking one credential means supplying a ceremony
+  for every slot you keep — each requiring that credential present. ⚠️ Noted in both blocks:
+  `revokeAuthenticator` is in **no published hub** — it landed after `@noy-db/hub@0.7.1-pre.0` was
+  cut, so it is in neither `@latest` nor `@next`.
+
 ### Fixed
 
 - **Two slot-rewrap TSDoc blocks said `rotateSecret` staled the old DEKs.** It does not: it rewraps

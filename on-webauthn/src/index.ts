@@ -639,6 +639,29 @@ export async function unlockWebAuthn(
  * invalidated the captured blob. It does not, and nothing in this
  * ceremony is a revocation step.
  *
+ * ## Revoking a credential — this ceremony is a REQUIRED INPUT to it
+ *
+ * Hub's `revokeAuthenticator` is the real revocation, and it is three steps:
+ * `removeAuthenticator` (hides the slot), `rotateKeys` (mints fresh DEKs —
+ * the step that actually revokes), then `rotateSecret` with a
+ * `slotCeremonies` entry for every slot that STAYS.
+ *
+ * ⛔ **A remaining slot handed no ceremony is DROPPED, not preserved.** After
+ * the `rotateKeys` step its blob wraps DEKs that no longer exist, so keeping
+ * it would leave a credential that silently fails. Its holder must re-enrol.
+ *
+ * So revoking ONE credential means supplying `webAuthnSlotRewrapCeremony` for
+ * EVERY WebAuthn slot you intend to keep — and each requires that
+ * credential to be present (a live assertion on the authenticator, which means the user in front of the device). Re-wrapping a credential
+ * is the credential's own operation; there is no way to do it on the
+ * holder's behalf.
+ *
+ * ⚠️ **Not in any published hub at the time of writing.**
+ * `revokeAuthenticator` landed on noy-db `main` in `0612b4ac`, AFTER
+ * `@noy-db/hub@0.7.1-pre.0` was cut and published — so it is in neither
+ * `@latest` (0.7.0) nor `@next` (0.7.1-pre.0). Ask npm before promising it to
+ * a consumer; do not infer its version from hub's `main`.
+ *
  * Single ceremony, two operations:
  *   1. Trigger one WebAuthn assertion to derive the wrapping key.
  *   2. Decrypt the OLD `wrapped_kek` to extract identity fields
